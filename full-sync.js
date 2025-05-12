@@ -1,4 +1,3 @@
-const { verifyAllWhenMocksCalled } = require('jest-when')
 const appFn = require('./')
 const { FULL_SYNC_NOP, FULL_SYNC_PR, ADMIN_REPO } = require('./lib/env')
 const { createProbot } = require('probot')
