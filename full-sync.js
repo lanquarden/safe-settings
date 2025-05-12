@@ -28,7 +28,7 @@ async function performDryRun (appFn, pr, admin_repo) {
 
   try {
     const app = appFn(probot, {})
-    const github = await app.auth()
+    const github = await app.robot.auth()
     const app_data = await github.apps.getAuthenticated()
     const pr_data = await github.pulls.get({
       owner: app_data.owner.login,
