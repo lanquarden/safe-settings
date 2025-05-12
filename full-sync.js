@@ -22,39 +22,58 @@ async function performFullSync (appFn, nop) {
   }
 }
 
-async function performDryRun (appFn, pr, admin_repo) {
+async function performDryRun (appFn, pr, adminRepo) {
   const probot = createProbot()
   probot.log.info(`Starting dry run with PR=${pr}`)
 
   try {
     const app = appFn(probot, {})
-    const github = await app.robot.auth()
-    const app_data = await github.apps.getAuthenticated()
-    const pr_data = await github.pulls.get({
-      owner: app_data.owner.login,
-      repo: admin_repo,
-      pull_number: pr
-    })
-    const cr_context = {
-      payload: {
-        pr_data
-      },
-      octokit: github,
-      log: probot.log,
+    const github = await probot.auth()
+
+    const installations = await github.paginate(
+      github.apps.listInstallations.endpoint.merge({ per_page: 100 })
+    )
+
+    if (installations.length > 0) {
+      const installation = installations[0]
+      const github = await probot.auth(installation.id)
+      const pullRequest = await github.pulls.get({
+        owner: installation.account.login,
+        repo: adminRepo,
+        pull_number: pr
+      })
+      const crContext = {
+        payload: {
+          repository: pullRequest.data.head.repo
+        },
+        octokit: github,
+        log: probot.log
+      }
+
+      const checkRun = await app.createCheckRun(crContext, null, pullRequest.data.head.sha, null)
+
+      const checkSuite = await github.request('GET /repos/{owner}/{repo}/check-suites/{check_suite_id}', {
+        owner: installation.account.login,
+        repo: adminRepo,
+        check_suite_id: checkRun.data.check_suite.id,
+        headers: {
+          'X-GitHub-Api-Version': '2022-11-28'
+        }
+      })
+
+      checkRun.data.check_suite = checkSuite.data
+
+      await app.runTheChecks({
+        payload: {
+          repository: pullRequest.data.head.repo,
+          check_run: checkRun.data
+        },
+        octokit: github,
+        repo: () => { return { repo: adminRepo, owner: installation.account.login } }
+      })
     }
 
-    const check_run = await app.createCheckRun(cr_context, null, pr_data.head.sha, null)
-
-    app.receive({
-      name: 'check_run',
-      payload: {
-        action: 'created',
-        check_run: check_run
-      }
-    })
-
     probot.log.info('Dry run completed successfully.')
-
   } catch (error) {
     process.stdout.write(`Unexpected error during dry run: ${error}\n`)
     process.exit(1)

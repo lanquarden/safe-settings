@@ -255,6 +255,91 @@ module.exports = (robot, { getRouter }, Settings = require('./lib/settings')) =>
     return null
   }
 
+  async function runTheChecks (context) {
+    const { payload } = context
+    const { repository } = payload
+    const { check_run } = payload
+    const { check_suite } = check_run
+    const pull_request = check_suite.pull_requests[0]
+    const source = payload.check_run.name === 'Safe-setting validator'
+    if (!source) {
+      robot.log.debug(' Not triggered by Safe-settings...')
+      return
+    }
+
+    if (check_run.status === 'completed') {
+      robot.log.debug(' Checkrun created as completed, returning')
+      return
+    }
+
+    const adminRepo = repository.name === env.ADMIN_REPO
+    robot.log.debug(`Is Admin repo event ${adminRepo}`)
+    if (!adminRepo) {
+      robot.log.debug('Not working on the Admin repo, returning...')
+      return
+    }
+
+    if (!pull_request) {
+      robot.log.debug('Not working on a PR, returning...')
+      return
+    }
+
+    let params = {
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      check_run_id: payload.check_run.id,
+      status: 'in_progress',
+      started_at: new Date().toISOString(),
+      output: { title: 'Starting NOP', summary: 'initiating...' }
+    }
+    robot.log.debug(`Updating check run ${JSON.stringify(params)}`)
+    await context.octokit.checks.update(params)
+
+    // guarding against null value from upstream libary that is
+    // causing a 404 and the check to stall
+    // from issue: https://github.com/github/safe-settings/issues/185#issuecomment-1075240374
+    if (check_suite.before === '0000000000000000000000000000000000000000') {
+      check_suite.before = check_suite.pull_requests[0].base.sha
+    }
+    params = Object.assign(context.repo(), { basehead: `${check_suite.before}...${check_suite.after}` })
+    const changes = await context.octokit.repos.compareCommitsWithBasehead(params)
+    const files = changes.data.files.map(f => { return f.filename })
+
+    const settingsModified = files.includes(Settings.FILE_PATH)
+
+    if (settingsModified) {
+      robot.log.debug(`Changes in '${Settings.FILE_PATH}' detected, doing a full synch...`)
+      return syncAllSettings(true, context, context.repo(), pull_request.head.ref)
+    }
+
+    const repoChanges = getChangedRepoConfigName(Settings.REPO_PATTERN, files, context.repo().owner)
+    if (repoChanges.length > 0) {
+      return Promise.all(repoChanges.map(repo => {
+        return syncSettings(true, context, repo, pull_request.head.ref)
+      }))
+    }
+
+    const subOrgChanges = getChangedSubOrgConfigName(Settings.SUB_ORG_PATTERN, files, context.repo().owner)
+    if (subOrgChanges.length) {
+      return Promise.all(subOrgChanges.map(suborg => {
+        return syncSubOrgSettings(true, context, suborg, context.repo(), pull_request.head.ref)
+      }))
+    }
+
+    // if no safe-settings changes detected, send a success to the check run
+    params = {
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      check_run_id: payload.check_run.id,
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      conclusion: 'success',
+      output: { title: 'No Safe-settings changes detected', summary: 'No changes detected' }
+    }
+    robot.log.debug(`Completing check run ${JSON.stringify(params)}`)
+    await context.octokit.checks.update(params)
+  }
+
   robot.on('push', async context => {
     const { payload } = context
     const { repository } = payload
@@ -549,88 +634,7 @@ module.exports = (robot, { getRouter }, Settings = require('./lib/settings')) =>
 
   robot.on(['check_run.created'], async context => {
     robot.log.debug('Check run was created!')
-    const { payload } = context
-    const { repository } = payload
-    const { check_run } = payload
-    const { check_suite } = check_run
-    const pull_request = check_suite.pull_requests[0]
-    const source = payload.check_run.name === 'Safe-setting validator'
-    if (!source) {
-      robot.log.debug(' Not triggered by Safe-settings...')
-      return
-    }
-
-    if (check_run.status === 'completed') {
-      robot.log.debug(' Checkrun created as completed, returning')
-      return
-    }
-
-    const adminRepo = repository.name === env.ADMIN_REPO
-    robot.log.debug(`Is Admin repo event ${adminRepo}`)
-    if (!adminRepo) {
-      robot.log.debug('Not working on the Admin repo, returning...')
-      return
-    }
-
-    if (!pull_request) {
-      robot.log.debug('Not working on a PR, returning...')
-      return
-    }
-
-    let params = {
-      owner: payload.repository.owner.login,
-      repo: payload.repository.name,
-      check_run_id: payload.check_run.id,
-      status: 'in_progress',
-      started_at: new Date().toISOString(),
-      output: { title: 'Starting NOP', summary: 'initiating...' }
-    }
-    robot.log.debug(`Updating check run ${JSON.stringify(params)}`)
-    await context.octokit.checks.update(params)
-
-    // guarding against null value from upstream libary that is
-    // causing a 404 and the check to stall
-    // from issue: https://github.com/github/safe-settings/issues/185#issuecomment-1075240374
-    if (check_suite.before === '0000000000000000000000000000000000000000') {
-      check_suite.before = check_suite.pull_requests[0].base.sha
-    }
-    params = Object.assign(context.repo(), { basehead: `${check_suite.before}...${check_suite.after}` })
-    const changes = await context.octokit.repos.compareCommitsWithBasehead(params)
-    const files = changes.data.files.map(f => { return f.filename })
-
-    const settingsModified = files.includes(Settings.FILE_PATH)
-
-    if (settingsModified) {
-      robot.log.debug(`Changes in '${Settings.FILE_PATH}' detected, doing a full synch...`)
-      return syncAllSettings(true, context, context.repo(), pull_request.head.ref)
-    }
-
-    const repoChanges = getChangedRepoConfigName(Settings.REPO_PATTERN, files, context.repo().owner)
-    if (repoChanges.length > 0) {
-      return Promise.all(repoChanges.map(repo => {
-        return syncSettings(true, context, repo, pull_request.head.ref)
-      }))
-    }
-
-    const subOrgChanges = getChangedSubOrgConfigName(Settings.SUB_ORG_PATTERN, files, context.repo().owner)
-    if (subOrgChanges.length) {
-      return Promise.all(subOrgChanges.map(suborg => {
-        return syncSubOrgSettings(true, context, suborg, context.repo(), pull_request.head.ref)
-      }))
-    }
-
-    // if no safe-settings changes detected, send a success to the check run
-    params = {
-      owner: payload.repository.owner.login,
-      repo: payload.repository.name,
-      check_run_id: payload.check_run.id,
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-      conclusion: 'success',
-      output: { title: 'No Safe-settings changes detected', summary: 'No changes detected' }
-    }
-    robot.log.debug(`Completing check run ${JSON.stringify(params)}`)
-    await context.octokit.checks.update(params)
+    return runTheChecks(context)
   })
 
   robot.on('repository.created', async context => {
@@ -662,6 +666,8 @@ module.exports = (robot, { getRouter }, Settings = require('./lib/settings')) =>
   info()
 
   return {
-    syncInstallation
+    syncInstallation,
+    createCheckRun,
+    runTheChecks
   }
 }
