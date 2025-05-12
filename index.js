@@ -213,6 +213,7 @@ module.exports = (robot, { getRouter }, Settings = require('./lib/settings')) =>
       head_sha
     })
     robot.log.debug(JSON.stringify(res, null))
+    return res
   }
 
   async function info () {
