@@ -71,7 +71,8 @@ async function performDryRun (appFn, pr, adminRepo) {
           check_run: checkRun.data
         },
         octokit: github,
-        repo: () => { return { repo: adminRepo, owner: installation.account.login } }
+        repo: () => { return { repo: adminRepo, owner: installation.account.login } },
+        log: probot.log
       })
     }
 
