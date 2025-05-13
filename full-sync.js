@@ -18,6 +18,7 @@ async function performFullSync (appFn, nop) {
     probot.log.info('Full sync completed successfully.')
   } catch (error) {
     process.stdout.write(`Unexpected error during full sync: ${error}\n`)
+    process.stdout.write(`${error.stack}\n`)
     process.exit(1)
   }
 }
@@ -76,6 +77,7 @@ async function performDryRun (appFn, pr, adminRepo) {
     probot.log.info('Dry run completed successfully.')
   } catch (error) {
     process.stdout.write(`Unexpected error during dry run: ${error}\n`)
+    process.stdout.write(`${error.stack}\n`)
     process.exit(1)
   }
 }
