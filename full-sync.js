@@ -66,6 +66,7 @@ async function performDryRun (appFn, pr, adminRepo) {
 
       await app.runTheChecks({
         payload: {
+          installation,
           repository: pullRequest.data.head.repo,
           check_run: checkRun.data
         },
