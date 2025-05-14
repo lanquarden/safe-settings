@@ -313,17 +313,23 @@ module.exports = (robot, { getRouter }, Settings = require('./lib/settings')) =>
     }
 
     const repoChanges = getChangedRepoConfigName(Settings.REPO_PATTERN, files, context.repo().owner)
+    const changePromises = []
     if (repoChanges.length > 0) {
-      return Promise.all(repoChanges.map(repo => {
+      changePromises.push(Promise.all(repoChanges.map(repo => {
         return syncSettings(true, context, repo, pull_request.head.ref)
-      }))
+      })))
     }
 
     const subOrgChanges = getChangedSubOrgConfigName(Settings.SUB_ORG_PATTERN, files, context.repo().owner)
     if (subOrgChanges.length) {
-      return Promise.all(subOrgChanges.map(suborg => {
+      changePromises.push(Promise.all(subOrgChanges.map(suborg => {
         return syncSubOrgSettings(true, context, suborg, context.repo(), pull_request.head.ref)
-      }))
+      })))
+    }
+
+    // return both individual and suborg changes
+    if (changePromises.length > 0) {
+      return Promise.all(changePromises)
     }
 
     // if no safe-settings changes detected, send a success to the check run
